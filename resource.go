@@ -50,7 +50,7 @@ type Resource interface {
 	// or a delete action objects.
 	// See the protocol specification for more information:
 	//    https://github.com/jirenius/resgate/blob/master/docs/res-service-protocol.md#model-change-event
-	ChangeEvent(props map[string]interface{})
+	ChangeEvent(props interface{})
 
 	// AddEvent sends an add event, adding the value at index idx.
 	// Panics if the resource is not a Collection, or if idx is less than 0.
@@ -179,11 +179,11 @@ func (r *resource) Event(event string, payload interface{}) {
 // ChangeEvent sends a change event.
 // If ev is empty, no event is sent.
 // Panics if the resource is not a Model.
-func (r *resource) ChangeEvent(ev map[string]interface{}) {
+func (r *resource) ChangeEvent(ev interface{}) {
 	if r.hs.typ != rtypeModel {
 		panic("res: change event only allowed on Models")
 	}
-	if len(ev) == 0 {
+	if ev == nil {
 		return
 	}
 	r.s.event("event."+r.rname+".change", ev)
