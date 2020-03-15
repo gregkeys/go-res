@@ -11,6 +11,9 @@ type Conn interface {
 	// ChanSubscribe subscribes to messages matching the subject pattern.
 	ChanSubscribe(subject string, ch chan *nats.Msg) (*nats.Subscription, error)
 
+	// QueueSubscribeSyncWithChan subscribes to messages matching the subject pattern.
+	QueueSubscribeSyncWithChan(subj, queue string, ch chan *nats.Msg) (*nats.Subscription, error)
+
 	// Close will close the connection to the server.
 	Close()
 }

@@ -429,7 +429,7 @@ func (s *Service) subscribe() error {
 		if t == RequestTypeAccess && !s.withAccess {
 			continue
 		}
-		sub, err := s.nc.ChanSubscribe(t+"."+s.Name+".>", s.inCh)
+		sub, err := s.nc.QueueSubscribeSyncWithChan(t+"."+s.Name+".>", s.Name, s.inCh)
 		if err != nil {
 			return err
 		}
