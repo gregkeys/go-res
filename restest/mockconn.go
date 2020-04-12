@@ -166,6 +166,10 @@ func (c *MockConn) ChanSubscribe(subj string, ch chan *nats.Msg) (*nats.Subscrip
 	return sub, nil
 }
 
+func (c *MockConn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *nats.Msg) (*nats.Subscription, error) {
+	return c.ChanSubscribe(subj, ch)
+}
+
 // Close will close the connection to the server.
 func (c *MockConn) Close() {
 	if c.cfg.UseGnatsd {

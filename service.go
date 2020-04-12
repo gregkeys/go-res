@@ -736,38 +736,40 @@ func (s *Service) subscribe() error {
 	if len(s.resetResources) == 0 && len(s.resetAccess) == 0 {
 		return errors.New("res: no resources to serve")
 	}
-	var patterns []string
+	patterns := make(map[string][]string)
 	for _, t := range []string{RequestTypeGet, RequestTypeCall, RequestTypeAuth} {
 		for _, p := range s.resetResources {
 			pattern := t + "." + p
 			if pattern[len(pattern)-1] != '>' && t != RequestTypeGet {
 				pattern += ".*"
 			}
-			patterns = append(patterns, pattern)
+			patterns[p] = append(patterns[p], pattern)
 
 		}
 	}
 	for _, p := range s.resetAccess {
 		pattern := "access." + p
 		s.tracef("sub %s", pattern)
-		_, err := s.nc.ChanSubscribe(pattern, s.inCh)
+		_, err := s.nc.QueueSubscribeSyncWithChan(pattern, pattern, s.inCh)
 		if err != nil {
 			return err
 		}
 	}
 
 next:
-	for i, pattern := range patterns {
-		// Skip patterns that overlap one another
-		for j, mpattern := range patterns {
-			if i != j && Pattern(mpattern).Matches(pattern) {
-				continue next
+	for k, patternsList := range patterns {
+		for i, pattern := range patternsList {
+			// Skip patterns that overlap one another
+			for j, mpattern := range patternsList {
+				if i != j && Pattern(mpattern).Matches(pattern) {
+					continue next
+				}
 			}
-		}
-		s.tracef("sub %s", pattern)
-		_, err := s.nc.ChanSubscribe(pattern, s.inCh)
-		if err != nil {
-			return err
+			s.tracef("sub %s", pattern)
+			_, err := s.nc.QueueSubscribeSyncWithChan(pattern, k, s.inCh)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
