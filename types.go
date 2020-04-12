@@ -7,13 +7,14 @@ import "encoding/json"
 //  {"rid":"userService.user.42"}
 type Ref string
 
-// Resource type enum
-type rtype byte
+// ResourceType enum
+type ResourceType byte
 
+// Resource type enum values
 const (
-	rtypeUnset rtype = iota
-	rtypeModel
-	rtypeCollection
+	TypeUnset ResourceType = iota
+	TypeModel
+	TypeCollection
 )
 
 var refPrefix = []byte(`{"rid":`)
@@ -21,18 +22,7 @@ var refPrefix = []byte(`{"rid":`)
 const refSuffix = '}'
 
 // DeleteAction is used for deleted properties in "change" events
-var DeleteAction = json.RawMessage(`{"action":"delete"}`)
-
-// addEvent is used as event payload on "add" events
-type addEvent struct {
-	Value interface{} `json:"value"`
-	Idx   int         `json:"idx"`
-}
-
-// removeEvent is used as event payload on "remove" events
-type removeEvent struct {
-	Idx int `json:"idx"`
-}
+var DeleteAction = &struct{ json.RawMessage }{RawMessage: json.RawMessage(`{"action":"delete"}`)}
 
 // MarshalJSON makes Ref implement the json.Marshaler interface.
 func (r Ref) MarshalJSON() ([]byte, error) {
@@ -47,17 +37,30 @@ func (r Ref) MarshalJSON() ([]byte, error) {
 	return o, nil
 }
 
+// UnmarshalJSON makes Ref implement the json.Unmarshaler interface.
+func (r *Ref) UnmarshalJSON(b []byte) error {
+	var p struct {
+		RID string `json:"rid"`
+	}
+	err := json.Unmarshal(b, &p)
+	if err != nil {
+		return err
+	}
+	*r = Ref(p.RID)
+	return nil
+}
+
 // IsValid returns true if the reference RID is valid, otherwise false.
 func (r Ref) IsValid() bool {
 	start := true
-	for _, r := range r {
-		if r == '?' {
+	for _, c := range r {
+		if c == '?' {
 			return !start
 		}
-		if r < 33 || r > 126 || r == '*' || r == '>' {
+		if c < 33 || c > 126 || c == '*' || c == '>' {
 			return false
 		}
-		if r == '.' {
+		if c == '.' {
 			if start {
 				return false
 			}

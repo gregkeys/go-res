@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"strconv"
 	"time"
 
-	nats "github.com/nats-io/go-nats"
+	nats "github.com/nats-io/nats.go"
 )
 
 // Request types
@@ -43,7 +44,8 @@ type AccessRequest interface {
 	AccessDenied()
 	AccessGranted()
 	NotFound()
-	Error(err *Error)
+	InvalidQuery(message string)
+	Error(err error)
 	RawToken() json.RawMessage
 	ParseToken(interface{})
 	Timeout(d time.Duration)
@@ -55,8 +57,10 @@ type ModelRequest interface {
 	Model(model interface{})
 	QueryModel(model interface{}, query string)
 	NotFound()
-	Error(err *Error)
+	InvalidQuery(message string)
+	Error(err error)
 	Timeout(d time.Duration)
+	ForValue() bool
 }
 
 // CollectionRequest has methods for responding to collection get requests.
@@ -65,8 +69,24 @@ type CollectionRequest interface {
 	Collection(collection interface{})
 	QueryCollection(collection interface{}, query string)
 	NotFound()
-	Error(err *Error)
+	InvalidQuery(message string)
+	Error(err error)
 	Timeout(d time.Duration)
+	ForValue() bool
+}
+
+// GetRequest has methods for responding to resource get requests.
+type GetRequest interface {
+	Resource
+	Model(model interface{})
+	QueryModel(model interface{}, query string)
+	Collection(collection interface{})
+	QueryCollection(collection interface{}, query string)
+	NotFound()
+	InvalidQuery(message string)
+	Error(err error)
+	Timeout(d time.Duration)
+	ForValue() bool
 }
 
 // CallRequest has methods for responding to call requests.
@@ -79,10 +99,12 @@ type CallRequest interface {
 	ParseParams(interface{})
 	ParseToken(interface{})
 	OK(result interface{})
+	Resource(rid string)
 	NotFound()
 	MethodNotFound()
 	InvalidParams(message string)
-	Error(err *Error)
+	InvalidQuery(message string)
+	Error(err error)
 	Timeout(d time.Duration)
 }
 
@@ -98,7 +120,8 @@ type NewRequest interface {
 	NotFound()
 	MethodNotFound()
 	InvalidParams(message string)
-	Error(err *Error)
+	InvalidQuery(message string)
+	Error(err error)
 	Timeout(d time.Duration)
 }
 
@@ -116,10 +139,12 @@ type AuthRequest interface {
 	RemoteAddr() string
 	URI() string
 	OK(result interface{})
+	Resource(rid string)
 	NotFound()
 	MethodNotFound()
 	InvalidParams(message string)
-	Error(err *Error)
+	InvalidQuery(message string)
+	Error(err error)
 	Timeout(d time.Duration)
 	TokenEvent(t interface{})
 }
@@ -131,18 +156,22 @@ var (
 	responseNotFound        = []byte(`{"error":{"code":"system.notFound","message":"Not found"}}`)
 	responseMethodNotFound  = []byte(`{"error":{"code":"system.methodNotFound","message":"Method not found"}}`)
 	responseInvalidParams   = []byte(`{"error":{"code":"system.invalidParams","message":"Invalid parameters"}}`)
+	responseInvalidQuery    = []byte(`{"error":{"code":"system.invalidQuery","message":"Invalid query"}}`)
 	responseMissingResponse = []byte(`{"error":{"code":"system.internalError","message":"Internal error: missing response"}}`)
+	responseMissingQuery    = []byte(`{"error":{"code":"system.internalError","message":"Internal error: missing query"}}`)
 	responseAccessGranted   = []byte(`{"result":{"get":true,"call":"*"}}`)
+	responseNoQueryEvents   = []byte(`{"result":{"events":[]}}`)
+	responseSuccess         = []byte(`{"result":null}`)
 )
 
 // Predefined handlers
 var (
-	// Access handler that provides full get and call access.
+	// AccessGranted is an access handler that provides full get and call access.
 	AccessGranted AccessHandler = func(r AccessRequest) {
 		r.AccessGranted()
 	}
 
-	// Access handler that sends a system.accessDenied error response.
+	// AccessDenied is an access handler that sends a response denying all access.
 	AccessDenied AccessHandler = func(r AccessRequest) {
 		r.AccessDenied()
 	}
@@ -178,6 +207,7 @@ func (r *Request) RawToken() json.RawMessage {
 }
 
 // Header returns the HTTP headers sent by client on connect.
+//
 // Only set for auth requests.
 func (r *Request) Header() map[string][]string {
 	return r.header
@@ -186,6 +216,7 @@ func (r *Request) Header() map[string][]string {
 // Host returns the host on which the URL is sought by the client.
 // Per RFC 2616, this is either the value of the "Host" header or the host name
 // given in the URL itself.
+//
 // Only set for auth requests.
 func (r *Request) Host() string {
 	return r.host
@@ -193,6 +224,7 @@ func (r *Request) Host() string {
 
 // RemoteAddr returns the network address of the client sent on connect.
 // The format is not specified.
+//
 // Only set for auth requests.
 func (r *Request) RemoteAddr() string {
 	return r.remoteAddr
@@ -200,22 +232,44 @@ func (r *Request) RemoteAddr() string {
 
 // URI returns the unmodified Request-URI of the Request-Line
 // (RFC 2616, Section 5.1) as sent by the client on connect.
+//
 // Only set for auth requests.
 func (r *Request) URI() string {
 	return r.uri
 }
 
-// OK sends a successful response for the request.
-// For get requests, the Model or Collection methods is usually used instead.
-// For access requests, the Access or AccessGranted methods is usually used instead.
+// OK sends a successful result response to a request.
 // The result may be nil.
+//
+// Only valid for call and auth requests.
 func (r *Request) OK(result interface{}) {
-	r.success(result)
+	if result == nil {
+		r.reply(responseSuccess)
+	} else {
+		r.success(result)
+	}
+}
+
+// Resource sends a successful resource response to a request.
+// The rid string must be a valid resource ID.
+//
+// Only valid for call and auth requests.
+func (r *Request) Resource(rid string) {
+	ref := Ref(rid)
+	if !ref.IsValid() {
+		panic("res: invalid resource ID: " + rid)
+	}
+	data, err := json.Marshal(resourceResponse{Resource: ref})
+	if err != nil {
+		r.error(ToError(err))
+		return
+	}
+	r.reply(data)
 }
 
 // Error sends a custom error response for the request.
-func (r *Request) Error(err *Error) {
-	r.error(err)
+func (r *Request) Error(err error) {
+	r.error(ToError(err))
 }
 
 // NotFound sends a system.notFound response for the request.
@@ -224,6 +278,7 @@ func (r *Request) NotFound() {
 }
 
 // MethodNotFound sends a system.methodNotFound response for the request.
+//
 // Only valid for call and auth requests.
 func (r *Request) MethodNotFound() {
 	r.reply(responseMethodNotFound)
@@ -231,6 +286,7 @@ func (r *Request) MethodNotFound() {
 
 // InvalidParams sends a system.invalidParams response.
 // An empty message will default to "Invalid parameters".
+//
 // Only valid for call and auth requests.
 func (r *Request) InvalidParams(message string) {
 	if message == "" {
@@ -240,11 +296,23 @@ func (r *Request) InvalidParams(message string) {
 	}
 }
 
+// InvalidQuery sends a system.invalidQuery response.
+// An empty message will default to "Invalid query".
+func (r *Request) InvalidQuery(message string) {
+	if message == "" {
+		r.reply(responseInvalidQuery)
+	} else {
+		r.error(&Error{Code: CodeInvalidQuery, Message: message})
+	}
+}
+
 // Access sends a successful response.
+//
 // The get flag tells if the client has access to get (read) the resource.
 // The call string is a comma separated list of methods that the client can
 // call. Eg. "set,foo,bar". A single asterisk character ("*") means the client
 // is allowed to call any method. Empty string means no calls are allowed.
+//
 // Only valid for access requests.
 func (r *Request) Access(get bool, call string) {
 	if !get && call == "" {
@@ -255,13 +323,16 @@ func (r *Request) Access(get bool, call string) {
 }
 
 // AccessDenied sends a system.accessDenied response.
+//
 // Only valid for access requests.
 func (r *Request) AccessDenied() {
 	r.reply(responseAccessDenied)
 }
 
 // AccessGranted a successful response granting full access to the resource.
-// Same as calling Access(true, "*");
+// Same as calling:
+//     Access(true, "*");
+//
 // Only valid for access requests.
 func (r *Request) AccessGranted() {
 	r.reply(responseAccessGranted)
@@ -269,6 +340,7 @@ func (r *Request) AccessGranted() {
 
 // Model sends a successful model response for the get request.
 // The model must marshal into a JSON object.
+//
 // Only valid for get requests for a model resource.
 func (r *Request) Model(model interface{}) {
 	r.model(model, "")
@@ -276,6 +348,7 @@ func (r *Request) Model(model interface{}) {
 
 // QueryModel sends a successful query model response for the get request.
 // The model must marshal into a JSON object.
+//
 // Only valid for get requests for a model query resource.
 func (r *Request) QueryModel(model interface{}, query string) {
 	r.model(model, query)
@@ -283,15 +356,13 @@ func (r *Request) QueryModel(model interface{}, query string) {
 
 // model sends a successful model response for the get request.
 func (r *Request) model(model interface{}, query string) {
-	if query != "" && r.query == "" {
-		panic("res: query model response on non-query request")
-	}
 	// [TODO] Marshal model to a json.RawMessage to see if it is a JSON object
 	r.success(modelResponse{Model: model, Query: query})
 }
 
 // Collection sends a successful collection response for the get request.
 // The collection must marshal into a JSON array.
+//
 // Only valid for get requests for a collection resource.
 func (r *Request) Collection(collection interface{}) {
 	r.collection(collection, "")
@@ -299,6 +370,7 @@ func (r *Request) Collection(collection interface{}) {
 
 // QueryCollection sends a successful query collection response for the get request.
 // The collection must marshal into a JSON array.
+//
 // Only valid for get requests for a collection query resource.
 func (r *Request) QueryCollection(collection interface{}, query string) {
 	r.collection(collection, query)
@@ -306,16 +378,16 @@ func (r *Request) QueryCollection(collection interface{}, query string) {
 
 // collection sends a successful collection response for the get request.
 func (r *Request) collection(collection interface{}, query string) {
-	if query != "" && r.query == "" {
-		panic("res: query collection response on non-query request")
-	}
 	// [TODO] Marshal collection to a json.RawMessage to see if it is a JSON array
 	r.success(collectionResponse{Collection: collection, Query: query})
 }
 
 // New sends a successful response for the new call request.
 // Panics if rid is invalid.
+//
 // Only valid for new call requests.
+//
+// Deprecated: Use Resource method instead; deprecated in RES protocol v1.2.0
 func (r *Request) New(rid Ref) {
 	if !rid.IsValid() {
 		panic("res: invalid reference RID: " + rid)
@@ -326,6 +398,7 @@ func (r *Request) New(rid Ref) {
 // ParseParams unmarshals the JSON encoded parameters and stores the result in p.
 // If the request has no parameters, ParseParams does nothing.
 // On any error, ParseParams panics with a system.invalidParams *Error.
+//
 // Only valid for call and auth requests.
 func (r *Request) ParseParams(p interface{}) {
 	if len(r.params) == 0 {
@@ -340,6 +413,7 @@ func (r *Request) ParseParams(p interface{}) {
 // ParseToken unmarshals the JSON encoded token and stores the result in t.
 // If the request has no token, ParseToken does nothing.
 // On any error, ParseToken panics with a system.internalError *Error.
+//
 // Not valid for get requests.
 func (r *Request) ParseToken(t interface{}) {
 	if len(r.token) == 0 {
@@ -357,7 +431,7 @@ func (r *Request) Timeout(d time.Duration) {
 	if d < 0 {
 		panic("res: negative timeout duration")
 	}
-	out := []byte(`timeout:"` + strconv.FormatInt(d.Nanoseconds()/1000000, 10) + `"`)
+	out := []byte(`timeout:"` + strconv.FormatInt(int64(d/time.Millisecond), 10) + `"`)
 	r.s.rawEvent(r.msg.Reply, out)
 }
 
@@ -366,9 +440,18 @@ func (r *Request) Timeout(d time.Duration) {
 // A change of token will invalidate any previous access response received using the old token.
 // A nil token clears any previously set token.
 // To set the connection token for a different connection ID, use Service.TokenEvent.
+//
 // Only valid for auth requests.
 func (r *Request) TokenEvent(token interface{}) {
 	r.s.event("conn."+r.cid+".token", tokenEvent{Token: token})
+}
+
+// ForValue is used to tell whether a get request handler is called as a result of Value being
+// called from another handler.
+//
+// Only valid for get requests.
+func (r *Request) ForValue() bool {
+	return false
 }
 
 // success sends a successful response as a reply.
@@ -399,17 +482,16 @@ func (r *Request) reply(payload []byte) {
 		panic("res: response already sent on request")
 	}
 	r.replied = true
-	r.s.Tracef("<== %s: %s", r.msg.Subject, payload)
+	r.s.tracef("<== %s: %s", r.msg.Subject, payload)
 	err := r.s.nc.Publish(r.msg.Reply, payload)
 	if err != nil {
-		r.s.Logf("error sending reply %s: %s", r.msg.Subject, err)
+		r.s.errorf("Error sending reply %s: %s", r.msg.Subject, err)
 	}
 }
 
 func (r *Request) executeHandler() {
 	// Recover from panics inside handlers
 	defer func() {
-		r.inGet = false
 		v := recover()
 		if v == nil {
 			return
@@ -443,10 +525,10 @@ func (r *Request) executeHandler() {
 			}
 		}
 
-		r.s.Logf("error handling request %s: %s", r.msg.Subject, str)
+		r.s.errorf("Error handling request %s: %s\n\t%s", r.msg.Subject, str, string(debug.Stack()))
 	}()
 
-	hs := r.hs
+	hs := r.h
 
 	switch r.rtype {
 	case "access":
@@ -456,36 +538,27 @@ func (r *Request) executeHandler() {
 		}
 		hs.Access(r)
 	case "get":
-		r.inGet = true
-		switch hs.typ {
-		case rtypeModel:
-			hs.GetModel(r)
-		case rtypeCollection:
-
-			hs.GetCollection(r)
-		default:
+		if hs.Get == nil {
 			r.reply(responseNotFound)
 			return
 		}
+		hs.Get(r)
 	case "call":
 		if r.method == "new" {
-			h := hs.New
-			if h == nil {
-				r.reply(responseMethodNotFound)
+			if hs.New != nil {
+				hs.New(r)
 				return
 			}
-			h(r)
-		} else {
-			var h CallHandler
-			if hs.Call != nil {
-				h = hs.Call[r.method]
-			}
-			if h == nil {
-				r.reply(responseMethodNotFound)
-				return
-			}
-			h(r)
 		}
+		var h CallHandler
+		if hs.Call != nil {
+			h = hs.Call[r.method]
+		}
+		if h == nil {
+			r.reply(responseMethodNotFound)
+			return
+		}
+		h(r)
 	case "auth":
 		var h AuthHandler
 		if hs.Auth != nil {
@@ -497,7 +570,7 @@ func (r *Request) executeHandler() {
 		}
 		h(r)
 	default:
-		r.s.Logf("unknown request type: %s", r.Type())
+		r.s.errorf("Unknown request type: %s", r.Type())
 		return
 	}
 

@@ -17,6 +17,10 @@ type successResponse struct {
 	Result interface{} `json:"result"`
 }
 
+type resourceResponse struct {
+	Resource Ref `json:"resource"`
+}
+
 type errorResponse struct {
 	Error *Error `json:"error"`
 }
@@ -43,4 +47,34 @@ type resetEvent struct {
 
 type tokenEvent struct {
 	Token interface{} `json:"token"`
+}
+
+type changeEvent struct {
+	Values map[string]interface{} `json:"values"`
+}
+
+type addEvent struct {
+	Value interface{} `json:"value"`
+	Idx   int         `json:"idx"`
+}
+
+type removeEvent struct {
+	Idx int `json:"idx"`
+}
+
+type resQueryEvent struct {
+	Subject string `json:"subject"`
+}
+
+type resQueryRequest struct {
+	Query string `json:"query"`
+}
+
+type resEvent struct {
+	Event string      `json:"event"`
+	Data  interface{} `json:"data"`
+}
+
+type queryResponse struct {
+	Events []resEvent `json:"events"`
 }
