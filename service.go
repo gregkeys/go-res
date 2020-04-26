@@ -1005,6 +1005,8 @@ func (s *Service) processRequest(m *nats.Msg, rtype, rname, method string, mh *M
 		resource: resource{
 			rname:      rname,
 			pathParams: mh.Params,
+			cid:        rc.CID,
+			token:      rc.Token,
 			group:      mh.Group,
 			s:          s,
 			h:          mh.Handler,
@@ -1014,9 +1016,7 @@ func (s *Service) processRequest(m *nats.Msg, rtype, rname, method string, mh *M
 		rtype:      rtype,
 		method:     method,
 		msg:        m,
-		cid:        rc.CID,
 		params:     rc.Params,
-		token:      rc.Token,
 		header:     rc.Header,
 		host:       rc.Host,
 		remoteAddr: rc.RemoteAddr,

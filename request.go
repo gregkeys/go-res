@@ -28,9 +28,7 @@ type Request struct {
 	replied bool // Flag telling if a reply has been made
 
 	// Fields from the request data
-	cid        string
 	params     json.RawMessage
-	token      json.RawMessage
 	header     map[string][]string
 	host       string
 	remoteAddr string
@@ -46,8 +44,6 @@ type AccessRequest interface {
 	NotFound()
 	InvalidQuery(message string)
 	Error(err error)
-	RawToken() json.RawMessage
-	ParseToken(interface{})
 	Timeout(d time.Duration)
 }
 
@@ -93,11 +89,8 @@ type GetRequest interface {
 type CallRequest interface {
 	Resource
 	Method() string
-	CID() string
 	RawParams() json.RawMessage
-	RawToken() json.RawMessage
 	ParseParams(interface{})
-	ParseToken(interface{})
 	OK(result interface{})
 	Resource(rid string)
 	NotFound()
@@ -111,11 +104,8 @@ type CallRequest interface {
 // NewRequest has methods for responding to new call requests.
 type NewRequest interface {
 	Resource
-	CID() string
 	RawParams() json.RawMessage
-	RawToken() json.RawMessage
 	ParseParams(interface{})
-	ParseToken(interface{})
 	New(rid Ref)
 	NotFound()
 	MethodNotFound()
@@ -129,11 +119,8 @@ type NewRequest interface {
 type AuthRequest interface {
 	Resource
 	Method() string
-	CID() string
 	RawParams() json.RawMessage
-	RawToken() json.RawMessage
 	ParseParams(interface{})
-	ParseToken(interface{})
 	Header() map[string][]string
 	Host() string
 	RemoteAddr() string
@@ -188,22 +175,10 @@ func (r *Request) Method() string {
 	return r.method
 }
 
-// CID returns the connection ID of the requesting client connection.
-// Empty string for get requests.
-func (r *Request) CID() string {
-	return r.cid
-}
-
 // RawParams returns the JSON encoded method parameters, or nil if the request had no parameters.
 // Always returns nil for access and get requests.
 func (r *Request) RawParams() json.RawMessage {
 	return r.params
-}
-
-// RawToken returns the JSON encoded access token, or nil if the request had no token.
-// Always returns nil for get requests.
-func (r *Request) RawToken() json.RawMessage {
-	return r.token
 }
 
 // Header returns the HTTP headers sent by client on connect.
@@ -407,21 +382,6 @@ func (r *Request) ParseParams(p interface{}) {
 	err := json.Unmarshal(r.params, p)
 	if err != nil {
 		panic(&Error{Code: CodeInvalidParams, Message: err.Error()})
-	}
-}
-
-// ParseToken unmarshals the JSON encoded token and stores the result in t.
-// If the request has no token, ParseToken does nothing.
-// On any error, ParseToken panics with a system.internalError *Error.
-//
-// Not valid for get requests.
-func (r *Request) ParseToken(t interface{}) {
-	if len(r.token) == 0 {
-		return
-	}
-	err := json.Unmarshal(r.token, t)
-	if err != nil {
-		panic(InternalError(err))
 	}
 }
 

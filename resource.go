@@ -1,6 +1,7 @@
 package res
 
 import (
+	"encoding/json"
 	"net/url"
 
 	nats "github.com/nats-io/nats.go"
@@ -22,6 +23,15 @@ type Resource interface {
 
 	// PathParam returns the key placeholder parameter value derived from the resource name.
 	PathParam(string) string
+
+	// CID returns the Connection Identifier
+	CID() string
+
+	// RawToken returns the token serialized
+	RawToken() json.RawMessage
+
+	// ParseToken parses the token on provided interface
+	ParseToken(interface{})
 
 	// Query returns the query part of the resource ID without the question mark separator.
 	Query() string
@@ -106,6 +116,8 @@ type Resource interface {
 type resource struct {
 	rname      string
 	pathParams map[string]string
+	cid        string
+	token      json.RawMessage
 	query      string
 	group      string
 	h          Handler
@@ -136,6 +148,31 @@ func (r *resource) PathParams() map[string]string {
 // PathParam returns the parameter derived from the resource name for the key placeholder.
 func (r *resource) PathParam(key string) string {
 	return r.pathParams[key]
+}
+
+// CID returns the connection ID of the requesting client connection.
+// Empty string for get requests.
+func (r *resource) CID() string {
+	return r.cid
+}
+
+// RawToken returns the JSON encoded access token, or nil if the request had no token.
+// Always returns nil for get requests.
+func (r *resource) RawToken() json.RawMessage {
+	return r.token
+}
+
+// ParseToken unmarshals the JSON encoded token and stores the result in t.
+// If the request has no token, ParseToken does nothing.
+// On any error, ParseToken panics with a system.internalError *Error.
+func (r *resource) ParseToken(t interface{}) {
+	if len(r.token) == 0 {
+		return
+	}
+	err := json.Unmarshal(r.token, t)
+	if err != nil {
+		panic(InternalError(err))
+	}
 }
 
 // Query returns the query part of the resource ID without the question mark separator.
