@@ -757,7 +757,7 @@ func (s *Service) subscribe() error {
 	}
 
 next:
-	for k, patternsList := range patterns {
+	for _, patternsList := range patterns {
 		for i, pattern := range patternsList {
 			// Skip patterns that overlap one another
 			for j, mpattern := range patternsList {
