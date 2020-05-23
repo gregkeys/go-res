@@ -750,7 +750,7 @@ func (s *Service) subscribe() error {
 	for _, p := range s.resetAccess {
 		pattern := "access." + p
 		s.tracef("sub %s", pattern)
-		_, err := s.nc.QueueSubscribeSyncWithChan(pattern, pattern, s.inCh)
+		_, err := s.nc.QueueSubscribeSyncWithChan(pattern, s.Mux.path, s.inCh)
 		if err != nil {
 			return err
 		}
@@ -766,7 +766,7 @@ next:
 				}
 			}
 			s.tracef("sub %s", pattern)
-			_, err := s.nc.QueueSubscribeSyncWithChan(pattern, k, s.inCh)
+			_, err := s.nc.QueueSubscribeSyncWithChan(pattern, s.Mux.path, s.inCh)
 			if err != nil {
 				return err
 			}
